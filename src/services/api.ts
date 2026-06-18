@@ -1,0 +1,250 @@
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://dastyormenu-backend-production.up.railway.app/api'
+
+// Debug mode
+const DEBUG = import.meta.env.DEV
+
+// API Error handling
+class APIError extends Error {
+  constructor(public status: number, message: string, public details?: any) {
+    super(message)
+    this.name = 'APIError'
+  }
+}
+
+async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`
+  
+  if (DEBUG) {
+    console.log('🔵 API Request:', {
+      url,
+      method: options?.method || 'GET',
+      body: options?.body
+    })
+  }
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    })
+
+    if (DEBUG) {
+      console.log('🟢 API Response:', {
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok
+      })
+    }
+
+    if (!response.ok) {
+      let errorMessage = `API Error: ${response.statusText}`
+      let errorDetails = null
+
+      try {
+        const errorData = await response.json()
+        errorDetails = errorData
+        errorMessage = errorData.detail || errorData.message || errorMessage
+        
+        if (DEBUG) {
+          console.error('🔴 API Error Details:', errorDetails)
+        }
+      } catch {
+        // If response is not JSON, use status text
+        if (DEBUG) {
+          console.error('🔴 API Error (no JSON):', response.statusText)
+        }
+      }
+
+      // Special handling for common errors
+      if (response.status === 502) {
+        throw new APIError(502, 'Server vaqtincha ishlamayapti. Iltimos, keyinroq urinib ko\'ring.', errorDetails)
+      }
+      
+      if (response.status === 503) {
+        throw new APIError(503, 'Server texnik xizmat ko\'rsatilmoqda. Iltimos, keyinroq urinib ko\'ring.', errorDetails)
+      }
+
+      throw new APIError(response.status, errorMessage, errorDetails)
+    }
+
+    const data = await response.json()
+    
+    if (DEBUG) {
+      console.log('✅ API Success:', { url, dataPreview: JSON.stringify(data).substring(0, 100) })
+    }
+    
+    return data
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error
+    }
+    
+    if (DEBUG) {
+      console.error('🔴 Network Error:', error)
+    }
+    
+    // Check if it's a CORS error
+    if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+      throw new Error('CORS xatosi: Backend server bilan bog\'lanishda muammo. Backend CORS sozlamalarini tekshiring.')
+    }
+    
+    throw new Error('Network error: Internet aloqasini tekshiring yoki keyinroq urinib ko\'ring.')
+  }
+}
+
+// Types
+export interface MenuItem {
+  id: string
+  name: string
+  description?: string
+  price: number
+  category_id?: string
+  category_name?: string
+  image_url?: string
+  is_available: boolean
+  cook_time_minutes: number
+  ingredients?: string
+}
+
+export interface Category {
+  id: string
+  name: string
+  icon: string
+  organization_id?: string
+  organization?: string
+}
+
+export interface Table {
+  id: string
+  organization_id?: string
+  organization?: string
+  table_number: number
+  qr_code_id?: string
+  qr_code_image?: string
+  qr_code_url?: string
+  assigned_waiter?: string | null
+  waiter_name?: string | null
+  is_active?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface Organization {
+  id: string
+  name: string
+  logo_url?: string
+  address?: string
+  phone?: string
+}
+
+export interface MenuResponse {
+  count: number
+  next: string | null
+  previous: string | null
+  results: MenuItem[]
+}
+
+// API Functions
+export const api = {
+  // Get table by ID
+  async getTable(tableId: string): Promise<Table> {
+    return fetchAPI<Table>(`/tables/${tableId}/`)
+  },
+
+  // Get organization by ID
+  async getOrganization(organizationId: string): Promise<Organization> {
+    return fetchAPI<Organization>(`/organizations/${organizationId}/`)
+  },
+
+  // Get menu items with filters
+  async getMenuItems(params?: {
+    category?: string
+    is_available?: boolean
+    search?: string
+    page?: number
+  }): Promise<MenuResponse> {
+    const searchParams = new URLSearchParams()
+    
+    if (params?.category) searchParams.append('category', params.category)
+    if (params?.is_available !== undefined) searchParams.append('is_available', String(params.is_available))
+    if (params?.search) searchParams.append('search', params.search)
+    if (params?.page) searchParams.append('page', String(params.page))
+
+    const query = searchParams.toString()
+    return fetchAPI<MenuResponse>(`/menu/${query ? `?${query}` : ''}`)
+  },
+
+  // Get categories
+  async getCategories(organizationId?: string): Promise<Category[]> {
+    const query = organizationId ? `?organization=${organizationId}` : ''
+    const response = await fetchAPI<{ results: Category[] }>(`/categories/${query}`)
+    return response.results
+  },
+
+  // Create order
+  async createOrder(orderData: {
+    qr_code_id: string
+    customer_note: string
+    tip_percentage: number
+    items: Array<{
+      menu_item_id: string
+      quantity: number
+      modifications: string
+      item_status: string
+    }>
+  }) {
+    if (DEBUG) {
+      console.log('📤 Order Data (sending):', JSON.stringify(orderData, null, 2))
+    }
+
+    return fetchAPI('/orders/', {
+      method: 'POST',
+      body: JSON.stringify(orderData),
+    })
+  },
+
+  // Get order by ID
+  async getOrder(orderId: string) {
+    return fetchAPI(`/orders/${orderId}/`)
+  },
+}
+
+// Helper function to extract table ID from URL
+export function getTableIdFromURL(): string | null {
+  const path = window.location.pathname
+  const segments = path.split('/').filter(Boolean)
+  
+  // URL format: /711efdee-e4c6-4016-92aa-4e2f351aa329
+  if (segments.length > 0) {
+    const tableId = segments[0]
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (uuidRegex.test(tableId)) {
+      return tableId
+    }
+  }
+  
+  return null
+}
+
+// Cache helper
+const cache = new Map<string, { data: any; timestamp: number }>()
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
+export function getCached<T>(key: string): T | null {
+  const cached = cache.get(key)
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    return cached.data as T
+  }
+  cache.delete(key)
+  return null
+}
+
+export function setCache(key: string, data: any): void {
+  cache.set(key, { data, timestamp: Date.now() })
+}
