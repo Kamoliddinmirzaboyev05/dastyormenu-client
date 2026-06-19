@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://dastyormenu-backend-production.up.railway.app/api'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://dastyorapi.webportfolio.uz/api'
 
 // Debug mode
 const DEBUG = import.meta.env.DEV
